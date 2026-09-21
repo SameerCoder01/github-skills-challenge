@@ -1,3 +1,7 @@
+import io
+import runpy
+import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from src.anomaly_detector import AnomalyDetector
@@ -42,6 +46,15 @@ def test_anomalous_record_is_detected():
     assert event["type"] == "ANOMALY"
 
 
+def test_pipeline_processes_service_data_and_returns_counts():
+    result = run_pipeline("data/service_data.json")
+
+    assert result["records_processed"] == 10
+    assert len(result["anomalies_detected"]) == 2
+    assert len(result["events_consumed"]) == 2
+    assert all(event["type"] == "ANOMALY" for event in result["events_consumed"])
+
+
 def test_producer_publishes_event():
     topic = EventTopic("anomaly-events")
     producer = EventProducer(topic)
@@ -53,6 +66,14 @@ def test_producer_publishes_event():
 
     assert producer.publish(event)
     assert len(topic.get_messages()) == 1
+
+
+def test_producer_rejects_empty_event():
+    topic = EventTopic("anomaly-events")
+    producer = EventProducer(topic)
+
+    assert producer.publish(None) is False
+    assert topic.get_messages() == []
 
 
 def test_consumer_receives_event():
@@ -70,3 +91,27 @@ def test_consumer_receives_event():
     messages = consumer.consume()
 
     assert len(messages) == 1
+
+
+def test_event_topic_clear_removes_messages():
+    topic = EventTopic("anomaly-events")
+    topic.publish({"type": "ANOMALY"})
+
+    topic.clear()
+
+    assert topic.get_messages() == []
+
+
+def test_aiops_pipeline_main_entrypoint_runs():
+    repo_root = Path(__file__).resolve().parent.parent
+    script_path = repo_root / "src" / "aiops_pipeline.py"
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        runpy.run_path(str(script_path), run_name="__main__")
+
+    stdout_text = output.getvalue()
+    assert "AIOps Pipeline Result" in stdout_text
+    assert "Records processed: 10" in stdout_text
+    assert "Anomalies detected: 2" in stdout_text
+    assert "Events consumed: 2" in stdout_text
